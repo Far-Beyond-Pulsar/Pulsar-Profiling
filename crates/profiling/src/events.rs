@@ -1,7 +1,6 @@
 //! Profile event data structures
 
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 
 /// A profiling event captured via instrumentation
 #[derive(Debug, Clone, Serialize, Deserialize)]

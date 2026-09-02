@@ -2,6 +2,9 @@
 
 #[macro_export]
 macro_rules! profile_scope {
+    ($name:literal) => {
+        let _profile_guard = $crate::scope::ProfileScope::new_static($name);
+    };
     ($name:expr) => {
         let _profile_guard = $crate::scope::ProfileScope::new($name);
     };
@@ -9,6 +12,12 @@ macro_rules! profile_scope {
 
 #[macro_export]
 macro_rules! profile_scope_loc {
+    ($name:literal) => {
+        let _profile_guard = $crate::scope::ProfileScope::new_static_with_location(
+            $name,
+            Some(format!("{}:{}", file!(), line!())),
+        );
+    };
     ($name:expr) => {
         let _profile_guard = $crate::scope::ProfileScope::new_with_location(
             $name,
@@ -20,6 +29,6 @@ macro_rules! profile_scope_loc {
 #[macro_export]
 macro_rules! profile_function {
     () => {
-        $crate::profile_scope!(module_path!());
+        let _profile_guard = $crate::scope::ProfileScope::new_static(module_path!());
     };
 }

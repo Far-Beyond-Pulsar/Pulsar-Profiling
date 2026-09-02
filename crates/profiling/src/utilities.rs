@@ -2,7 +2,7 @@
 
 use crate::events::ProfileEvent;
 use crate::profiler::Profiler;
-use crate::scope::{init_profiler, THREAD_NAME};
+use crate::scope::{current_thread_id, init_profiler, THREAD_NAME};
 
 pub fn set_thread_name(name: impl Into<String>) {
     THREAD_NAME.with(|tn| {
@@ -40,17 +40,9 @@ pub fn record_frame_time(frame_time_ms: f32) {
         return;
     }
 
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let thread_id = std::thread::current().id();
-    let mut hasher = DefaultHasher::new();
-    thread_id.hash(&mut hasher);
-    let tid = hasher.finish();
-
     let event = ProfileEvent {
         name: "__FRAME_MARKER__".to_string(),
-        thread_id: tid,
+        thread_id: current_thread_id(),
         thread_name: THREAD_NAME.with(|tn| tn.borrow().clone()),
         process_id: profiler.get_process_id(),
         parent_name: None,

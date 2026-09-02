@@ -18,9 +18,31 @@ pub fn init_profiler() -> &'static Profiler {
 /// Thread-local profiling state
 #[derive(Default)]
 pub struct ThreadState {
-    depth: u32,
-    start_time: Option<Instant>,
-    scope_stack: Vec<String>, // Track parent scopes
+    scope_stack: Vec<ScopeName>,
+    thread_id: Option<u64>,
+}
+
+enum ScopeName {
+    Static(&'static str),
+    Owned(String),
+}
+
+impl ScopeName {
+    #[inline]
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Static(name) => name,
+            Self::Owned(name) => name,
+        }
+    }
+
+    #[inline]
+    fn into_string(self) -> String {
+        match self {
+            Self::Static(name) => name.to_owned(),
+            Self::Owned(name) => name,
+        }
+    }
 }
 
 thread_local! {
@@ -30,66 +52,69 @@ thread_local! {
 
 /// RAII scope guard for profiling
 pub struct ProfileScope {
-    pub(super) name: String,
     start: Instant,
     start_ns: u64,
     depth: u32,
     thread_id: u64,
-    thread_name: Option<String>,
-    parent_name: Option<String>,
+    active: bool,
     pub(super) location: Option<String>,
 }
 
 impl ProfileScope {
     /// Begin a new profiling scope
     pub fn new(name: impl Into<String>) -> Self {
-        Self::new_with_location(name, None)
+        Self::new_name(ScopeName::Owned(name.into()), None)
+    }
+
+    /// Begin a scope whose label is a compile-time string.
+    ///
+    /// The macro uses this path for string literals so the hot path does not
+    /// allocate a label until the event is actually emitted.
+    pub fn new_static(name: &'static str) -> Self {
+        Self::new_name(ScopeName::Static(name), None)
     }
 
     /// Begin a new profiling scope with file location
     pub fn new_with_location(name: impl Into<String>, location: Option<String>) -> Self {
+        Self::new_name(ScopeName::Owned(name.into()), location)
+    }
+
+    /// Begin a static-label scope with file location.
+    pub fn new_static_with_location(
+        name: &'static str,
+        location: Option<String>,
+    ) -> Self {
+        Self::new_name(ScopeName::Static(name), location)
+    }
+
+    fn new_name(name: ScopeName, location: Option<String>) -> Self {
         if !init_profiler().is_enabled() {
             return Self {
-                name: String::new(),
                 start: Instant::now(),
                 start_ns: 0,
                 depth: 0,
                 thread_id: 0,
-                thread_name: None,
-                parent_name: None,
+                active: false,
                 location: None,
             };
         }
 
-        let name = name.into();
         let start = Instant::now();
         let start_ns = get_time_ns();
-        let thread_id = get_thread_id();
-        let thread_name = THREAD_NAME.with(|tn| tn.borrow().clone());
-
-        let (depth, parent_name) = THREAD_STATE.with(|ts| {
+        let (depth, thread_id) = THREAD_STATE.with(|ts| {
             let mut state = ts.borrow_mut();
-            if state.start_time.is_none() {
-                state.start_time = Some(Instant::now());
-            }
-            let depth = state.depth;
-            state.depth += 1;
-
-            // Get parent scope name
-            let parent = state.scope_stack.last().cloned();
-            state.scope_stack.push(name.clone());
-
-            (depth, parent)
+            let depth = state.scope_stack.len() as u32;
+            let thread_id = *state.thread_id.get_or_insert_with(get_thread_id);
+            state.scope_stack.push(name);
+            (depth, thread_id)
         });
 
         Self {
-            name,
             start,
             start_ns,
             depth,
             thread_id,
-            thread_name,
-            parent_name,
+            active: true,
             location,
         }
     }
@@ -97,28 +122,36 @@ impl ProfileScope {
 
 impl Drop for ProfileScope {
     fn drop(&mut self) {
-        if !init_profiler().is_enabled() {
+        if !self.active {
             return;
         }
 
         let duration_ns = self.start.elapsed().as_nanos() as u64;
 
-        THREAD_STATE.with(|ts| {
+        let (name, parent_name) = THREAD_STATE.with(|ts| {
             let mut state = ts.borrow_mut();
-            state.depth = state.depth.saturating_sub(1);
-            state.scope_stack.pop();
+            let name = state
+                .scope_stack
+                .pop()
+                .expect("profiling scope stack must match scope guards");
+            let parent_name = state.scope_stack.last().map(|name| name.as_str().to_owned());
+            (name.into_string(), parent_name)
         });
 
+        if !init_profiler().is_enabled() {
+            return;
+        }
+
         let event = ProfileEvent {
-            name: self.name.clone(),
+            name,
             thread_id: self.thread_id,
-            thread_name: self.thread_name.clone(),
+            thread_name: THREAD_NAME.with(|tn| tn.borrow().clone()),
             process_id: init_profiler().get_process_id(),
-            parent_name: self.parent_name.clone(),
+            parent_name,
             start_ns: self.start_ns,
             duration_ns,
             depth: self.depth,
-            location: self.location.clone(),
+            location: self.location.take(),
             metadata: None,
         };
 
@@ -138,4 +171,11 @@ fn get_thread_id() -> u64 {
     let mut hasher = DefaultHasher::new();
     thread_id.hash(&mut hasher);
     hasher.finish()
+}
+
+pub(super) fn current_thread_id() -> u64 {
+    THREAD_STATE.with(|ts| {
+        let mut state = ts.borrow_mut();
+        *state.thread_id.get_or_insert_with(get_thread_id)
+    })
 }

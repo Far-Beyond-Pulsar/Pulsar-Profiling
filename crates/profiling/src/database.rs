@@ -31,6 +31,8 @@ pub fn create_database(db_path: &Path) -> rusqlite::Result<Connection> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS profile_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope_id INTEGER NOT NULL DEFAULT 0,
+            parent_scope_id INTEGER,
             name TEXT NOT NULL,
             thread_id INTEGER NOT NULL,
             thread_name TEXT,
@@ -40,10 +42,20 @@ pub fn create_database(db_path: &Path) -> rusqlite::Result<Connection> {
             duration_ns INTEGER NOT NULL,
             depth INTEGER NOT NULL,
             location TEXT,
-            metadata TEXT
+            metadata TEXT,
+            track_name TEXT
         )",
         [],
     )?;
+
+    // Upgrade databases created before logical scope identity existed.
+    for statement in [
+        "ALTER TABLE profile_events ADD COLUMN scope_id INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE profile_events ADD COLUMN parent_scope_id INTEGER",
+        "ALTER TABLE profile_events ADD COLUMN track_name TEXT",
+    ] {
+        let _ = conn.execute(statement, []);
+    }
 
     // Create indices for fast queries
     conn.execute(
@@ -85,12 +97,14 @@ pub fn save_events(conn: &Connection, events: &[ProfileEvent]) -> rusqlite::Resu
 
     let mut stmt = tx.prepare(
         "INSERT INTO profile_events
-         (name, thread_id, thread_name, process_id, parent_name, start_ns, duration_ns, depth, location, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+         (scope_id, parent_scope_id, name, thread_id, thread_name, process_id, parent_name, start_ns, duration_ns, depth, location, metadata, track_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )?;
 
     for event in events {
         stmt.execute(params![
+            event.scope_id as i64,
+            event.parent_scope_id.map(|id| id as i64),
             event.name,
             event.thread_id as i64,
             event.thread_name,
@@ -101,6 +115,7 @@ pub fn save_events(conn: &Connection, events: &[ProfileEvent]) -> rusqlite::Resu
             event.depth,
             event.location,
             event.metadata,
+            event.track_name,
         ])?;
     }
 
@@ -112,8 +127,19 @@ pub fn save_events(conn: &Connection, events: &[ProfileEvent]) -> rusqlite::Resu
 
 /// Load all events from database
 pub fn load_events(conn: &Connection) -> rusqlite::Result<Vec<ProfileEvent>> {
+    // Keep older capture files readable after the logical-scope protocol was
+    // introduced. SQLite has no IF NOT EXISTS form for ADD COLUMN, so an
+    // already-upgraded database simply returns a harmless duplicate error.
+    for statement in [
+        "ALTER TABLE profile_events ADD COLUMN scope_id INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE profile_events ADD COLUMN parent_scope_id INTEGER",
+        "ALTER TABLE profile_events ADD COLUMN track_name TEXT",
+    ] {
+        let _ = conn.execute(statement, []);
+    }
+
     let mut stmt = conn.prepare(
-        "SELECT name, thread_id, thread_name, process_id, parent_name, start_ns, duration_ns, depth, location, metadata
+        "SELECT scope_id, parent_scope_id, name, thread_id, thread_name, process_id, parent_name, start_ns, duration_ns, depth, location, metadata, track_name
          FROM profile_events
          ORDER BY start_ns"
     )?;
@@ -121,16 +147,19 @@ pub fn load_events(conn: &Connection) -> rusqlite::Result<Vec<ProfileEvent>> {
     let events = stmt
         .query_map([], |row| {
             Ok(ProfileEvent {
-                name: row.get(0)?,
-                thread_id: row.get::<_, i64>(1)? as u64,
-                thread_name: row.get(2)?,
-                process_id: row.get(3)?,
-                parent_name: row.get(4)?,
-                start_ns: row.get::<_, i64>(5)? as u64,
-                duration_ns: row.get::<_, i64>(6)? as u64,
-                depth: row.get(7)?,
-                location: row.get(8)?,
-                metadata: row.get(9)?,
+                scope_id: row.get::<_, i64>(0)? as u64,
+                parent_scope_id: row.get::<_, Option<i64>>(1)?.map(|id| id as u64),
+                name: row.get(2)?,
+                thread_id: row.get::<_, i64>(3)? as u64,
+                thread_name: row.get(4)?,
+                process_id: row.get(5)?,
+                parent_name: row.get(6)?,
+                start_ns: row.get::<_, i64>(7)? as u64,
+                duration_ns: row.get::<_, i64>(8)? as u64,
+                depth: row.get(9)?,
+                location: row.get(10)?,
+                metadata: row.get(11)?,
+                track_name: row.get(12)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

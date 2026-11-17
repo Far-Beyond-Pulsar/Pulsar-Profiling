@@ -14,17 +14,24 @@
 //! }
 //! ```
 
+#![warn(clippy::undocumented_unsafe_blocks)]
+
 pub mod database;
 pub mod events;
 pub mod macros;
+pub mod options;
 pub mod profiler;
+pub mod remote;
 pub mod scope;
 pub mod utilities;
 
 pub use events::ProfileEvent;
-pub use macros::*;
+pub use options::{set_uncap_frame_rate, uncap_frame_rate};
 pub use profiler::Profiler;
-pub use scope::{init_profiler, ProfileScope};
+pub use scope::{
+    allocate_scope_id, current_scope_context, init_profiler, interned_scope, record_elapsed,
+    ProfileScope, ScopeContext,
+};
 pub use utilities::*;
 
 #[inline]

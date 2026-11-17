@@ -2,12 +2,18 @@
 
 use crate::events::ProfileEvent;
 use crate::profiler::Profiler;
-use crate::scope::{init_profiler, THREAD_NAME};
+use crate::scope::{current_thread_id, init_profiler, THREAD_NAME, TRACK_NAME};
 
 pub fn set_thread_name(name: impl Into<String>) {
     THREAD_NAME.with(|tn| {
         *tn.borrow_mut() = Some(name.into());
     });
+}
+
+/// Assign a logical profiling track to the current producer. This is not an
+/// OS thread name and remains valid for CPU workers, async jobs, and queues.
+pub fn set_track_name(name: impl Into<String>) {
+    TRACK_NAME.with(|track| *track.borrow_mut() = Some(name.into()));
 }
 
 pub fn enable_profiling(profiler: &Profiler) {
@@ -40,17 +46,11 @@ pub fn record_frame_time(frame_time_ms: f32) {
         return;
     }
 
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let thread_id = std::thread::current().id();
-    let mut hasher = DefaultHasher::new();
-    thread_id.hash(&mut hasher);
-    let tid = hasher.finish();
-
     let event = ProfileEvent {
+        scope_id: 0,
+        parent_scope_id: None,
         name: "__FRAME_MARKER__".to_string(),
-        thread_id: tid,
+        thread_id: current_thread_id(),
         thread_name: THREAD_NAME.with(|tn| tn.borrow().clone()),
         process_id: profiler.get_process_id(),
         parent_name: None,
@@ -59,6 +59,7 @@ pub fn record_frame_time(frame_time_ms: f32) {
         depth: 0,
         location: None,
         metadata: Some(format!("frame_time_ms:{}", frame_time_ms)),
+        track_name: None,
     };
 
     profiler.submit_event(event);

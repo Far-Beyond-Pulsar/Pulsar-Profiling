@@ -1,11 +1,17 @@
 //! Profile event data structures
 
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 
 /// A profiling event captured via instrumentation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileEvent {
+    /// Stable identity for this completed scope. Unlike `thread_id`, this
+    /// remains valid when work is continued on another thread or queue.
+    #[serde(default)]
+    pub scope_id: u64,
+    /// Stable identity of the logical scope that spawned/contains this work.
+    #[serde(default)]
+    pub parent_scope_id: Option<u64>,
     /// Event name (function/scope name)
     pub name: String,
     /// Thread ID
@@ -26,4 +32,9 @@ pub struct ProfileEvent {
     pub location: Option<String>,
     /// Additional metadata (optional)
     pub metadata: Option<String>,
+    /// Optional producer-defined logical track. This is deliberately separate
+    /// from the OS thread name and supports CPU workers, GPU queues, async
+    /// executors, and other domains uniformly.
+    #[serde(default)]
+    pub track_name: Option<String>,
 }

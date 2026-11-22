@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "crates/profiling",
+    "crates/profiling_dylib",
 ]
 resolver = "2"

@@ -1,6 +1,6 @@
 [package]
 name = "profiling_dylib"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 publish = false
 description = "Pulsar-Profiling (the CPU profiler and its flamegraph store) and the native library it links (SQLite, through rusqlite) as one shared Rust dylib. A binary or plugin library that links it shares one profiler and one SQLite. Built with `-C prefer-dynamic` (.cargo/config.toml)."

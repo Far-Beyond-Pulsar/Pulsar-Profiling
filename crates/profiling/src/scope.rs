@@ -235,6 +235,40 @@ impl ProfileScope {
         Self::new_name(ScopeName::Owned(name.into()), location)
     }
 
+    /// Begin a static-label scope at a source location known at compile time
+    /// (`concat!(file!(), ":", line!())`). With the profiler off nothing is
+    /// formatted or allocated: the location becomes a `String` only for a
+    /// scope that is recorded.
+    pub fn new_static_at(name: &'static str, location: &'static str) -> Self {
+        if !init_profiler().is_enabled() {
+            return Self::inactive();
+        }
+        Self::new_name(ScopeName::Static(name), Some(location.to_owned()))
+    }
+
+    /// [`Self::new_static_at`] for a name known at run time.
+    pub fn new_at(name: impl Into<String>, location: &'static str) -> Self {
+        if !init_profiler().is_enabled() {
+            return Self::inactive();
+        }
+        Self::new_name(ScopeName::Owned(name.into()), Some(location.to_owned()))
+    }
+
+    /// A scope that records nothing (the profiler is off).
+    fn inactive() -> Self {
+        Self {
+            start: None,
+            start_ns: 0,
+            depth: 0,
+            thread_id: 0,
+            scope_id: 0,
+            parent_scope_id: None,
+            track_name: None,
+            active: false,
+            location: None,
+        }
+    }
+
     /// Begin a static-label scope with file location.
     pub fn new_static_with_location(name: &'static str, location: Option<String>) -> Self {
         Self::new_name(ScopeName::Static(name), location)
@@ -252,17 +286,7 @@ impl ProfileScope {
         explicit_track: Option<String>,
     ) -> Self {
         if !init_profiler().is_enabled() {
-            return Self {
-                start: None,
-                start_ns: 0,
-                depth: 0,
-                thread_id: 0,
-                scope_id: 0,
-                parent_scope_id: None,
-                track_name: None,
-                active: false,
-                location: None,
-            };
+            return Self::inactive();
         }
 
         let start = Instant::now();
